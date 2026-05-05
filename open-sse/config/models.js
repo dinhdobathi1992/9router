@@ -6,7 +6,11 @@ const DEFAULT_MODEL_INFO = {
   contextWindow: 200000,
 };
 
-export const MODEL_INFO = {};
+export const MODEL_INFO = {
+  "claude-opus-4-7":           { contextWindow: 1000000 },
+  "claude-sonnet-4-6":         { contextWindow: 1000000 },
+  "claude-opus-4-6":           { contextWindow: 1000000 },
+};
 
 export function getModelInfo(modelId) {
   return { ...DEFAULT_MODEL_INFO, ...MODEL_INFO[modelId] };
