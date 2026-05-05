@@ -1,4 +1,5 @@
 import { PROVIDER_MODELS, PROVIDER_ID_TO_ALIAS } from "@/shared/constants/models";
+import { getModelInfo as getModelContextInfo } from "open-sse/config/models.js";
 import {
   AI_PROVIDERS,
   getProviderAlias,
@@ -186,11 +187,13 @@ export async function buildModelsList(kindFilter) {
       if (!providerMatchesKinds(providerId, kindFilter)) continue;
       for (const model of providerModels) {
         if (!kindFilter.includes(modelKind(model))) continue;
+        const contextInfo = getModelContextInfo(model.id);
         models.push({
           id: `${alias}/${model.id}`,
           object: "model",
           created: timestamp,
           owned_by: alias,
+          context_window: contextInfo.contextWindow,
         });
       }
     }
@@ -302,11 +305,13 @@ export async function buildModelsList(kindFilter) {
         const kind = staticModelKindById.get(modelId) || inferKindFromUnknownModelId(modelId);
         if (!kindFilter.includes(kind)) continue;
 
+        const contextInfo = getModelContextInfo(modelId);
         models.push({
           id: `${outputAlias}/${modelId}`,
           object: "model",
           created: timestamp,
           owned_by: outputAlias,
+          context_window: contextInfo.contextWindow,
         });
       }
 

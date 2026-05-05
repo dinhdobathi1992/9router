@@ -29,12 +29,12 @@ function withCodexReviewModels(models) {
 export const PROVIDER_MODELS = {
   // OAuth Providers (using alias)
   cc: [  // Claude Code
-    { id: "claude-opus-4-7", name: "Claude Opus 4.7" },
-    { id: "claude-opus-4-6", name: "Claude Opus 4.6" },
-    { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
-    { id: "claude-opus-4-5-20251101", name: "Claude 4.5 Opus" },
-    { id: "claude-sonnet-4-5-20250929", name: "Claude 4.5 Sonnet" },
-    { id: "claude-haiku-4-5-20251001", name: "Claude 4.5 Haiku" },
+    { id: "claude-opus-4-7", name: "Claude Opus 4.7 (1M)" },
+    { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6 (1M)" },
+    { id: "claude-haiku-4-5-20251001", name: "Claude Haiku 4.5" },
+    { id: "claude-opus-4-6", name: "Claude Opus 4.6 (1M)" },
+    { id: "claude-opus-4-5-20251101", name: "Claude Opus 4.5" },
+    { id: "claude-sonnet-4-5-20250929", name: "Claude Sonnet 4.5" },
   ],
   cx: withCodexReviewModels([  // OpenAI Codex
     { id: "gpt-5.5", name: "GPT 5.5" },
