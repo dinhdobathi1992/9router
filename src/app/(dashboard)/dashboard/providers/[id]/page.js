@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import { Card, Button, Badge, Input, Modal, CardSkeleton, OAuthModal, KiroOAuthWrapper, CursorAuthModal, IFlowCookieModal, GitLabAuthModal, Toggle, Select, EditConnectionModal, NoAuthProxyCard } from "@/shared/components";
+import Pagination from "@/shared/components/Pagination";
 import { OAUTH_PROVIDERS, APIKEY_PROVIDERS, FREE_PROVIDERS, FREE_TIER_PROVIDERS, WEB_COOKIE_PROVIDERS, getProviderAlias, isOpenAICompatibleProvider, isAnthropicCompatibleProvider, AI_PROVIDERS, THINKING_CONFIG } from "@/shared/constants/providers";
 import { getModelsByProviderId } from "@/shared/constants/models";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
@@ -17,11 +18,14 @@ import AddApiKeyModal from "./AddApiKeyModal";
 import EditCompatibleNodeModal from "./EditCompatibleNodeModal";
 import AddCustomModelModal from "./AddCustomModelModal";
 
+const PAGE_SIZE = 50;
+
 export default function ProviderDetailPage() {
   const params = useParams();
   const router = useRouter();
   const providerId = params.id;
   const [connections, setConnections] = useState([]);
+  const [currentPage, setCurrentPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [providerNode, setProviderNode] = useState(null);
   const [proxyPools, setProxyPools] = useState([]);
@@ -47,6 +51,7 @@ export default function ProviderDetailPage() {
   const [suggestedModels, setSuggestedModels] = useState([]);
   const [kiloFreeModels, setKiloFreeModels] = useState([]);
   const [disabledModelIds, setDisabledModelIds] = useState([]);
+  const [testingPage, setTestingPage] = useState(false);
   const { copied, copy } = useCopyToClipboard();
 
   const providerInfo = providerNode
@@ -458,6 +463,34 @@ export default function ProviderDetailPage() {
     setSelectedConnectionIds((prev) => prev.filter((id) => connections.some((conn) => conn.id === id)));
   }, [connections]);
 
+  const paginatedConnections = useMemo(
+    () => connections.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE),
+    [connections, currentPage],
+  );
+
+  useEffect(() => {
+    const maxPage = Math.max(1, Math.ceil(connections.length / PAGE_SIZE));
+    if (currentPage > maxPage) setCurrentPage(maxPage);
+  }, [connections.length, currentPage]);
+
+  const handleTestPage = useCallback(async () => {
+    if (testingPage || paginatedConnections.length === 0) return;
+    setTestingPage(true);
+    await Promise.all(
+      paginatedConnections.map(async (conn) => {
+        try {
+          const res = await fetch(`/api/providers/${conn.id}/test`, { method: "POST" });
+          const data = await res.json();
+          const testStatus = res.ok && data.valid ? "active" : "error";
+          setConnections((prev) => prev.map((c) => c.id === conn.id ? { ...c, testStatus } : c));
+        } catch {
+          setConnections((prev) => prev.map((c) => c.id === conn.id ? { ...c, testStatus: "error" } : c));
+        }
+      })
+    );
+    setTestingPage(false);
+  }, [testingPage, paginatedConnections]);
+
   const selectedProxySummary = (() => {
     if (selectedConnections.length === 0) return "";
     const poolIds = new Set(selectedConnections.map((conn) => conn.providerSpecificData?.proxyPoolId || "__none__"));
@@ -523,8 +556,10 @@ export default function ProviderDetailPage() {
 
   const connectionsList = (
     <div className="flex min-w-0 flex-col divide-y divide-black/[0.03] dark:divide-white/[0.03]">
-      {connections
-        .map((conn, index) => (
+      {paginatedConnections
+        .map((conn, pageIndex) => {
+          const index = (currentPage - 1) * PAGE_SIZE + pageIndex;
+          return (
           <div key={conn.id} className="flex min-w-0 items-stretch">
             <div className="flex-1 min-w-0">
               <ConnectionRow
@@ -562,7 +597,8 @@ export default function ProviderDetailPage() {
               />
             </div>
           </div>
-        ))}
+          );
+        })}
     </div>
   );
 
@@ -989,6 +1025,16 @@ export default function ProviderDetailPage() {
                   </div>
                 )}
               </div>
+              {connections.length > 0 && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={handleTestPage}
+                  disabled={testingPage}
+                >
+                  {testingPage ? "Testing..." : `Test Page (${paginatedConnections.length})`}
+                </Button>
+              )}
             </div>
           </div>
 
@@ -1015,6 +1061,15 @@ export default function ProviderDetailPage() {
             </div>
           ) : (
             <>
+              {connections.length > PAGE_SIZE && (
+                <Pagination
+                  currentPage={currentPage}
+                  pageSize={PAGE_SIZE}
+                  totalItems={connections.length}
+                  onPageChange={setCurrentPage}
+                  className="mb-2"
+                />
+              )}
               {connectionsList}
               {!isCompatible && (
                 <div className="mt-4 grid grid-cols-1 gap-2 sm:flex">
