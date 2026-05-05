@@ -9,7 +9,7 @@ import { APP_CONFIG, UPDATER_CONFIG } from "@/shared/constants/config";
 import { MEDIA_PROVIDER_KINDS } from "@/shared/constants/providers";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import Button from "./Button";
-import { ConfirmModal } from "./Modal";
+import Modal, { ConfirmModal } from "./Modal";
 
 // const VISIBLE_MEDIA_KINDS = ["embedding", "image", "imageToText", "tts", "stt", "webSearch", "webFetch", "video", "music"];
 const VISIBLE_MEDIA_KINDS = ["embedding", "image", "tts"];
@@ -47,6 +47,9 @@ export default function Sidebar({ onClose }) {
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
   const [updateStatus, setUpdateStatus] = useState(null);
+  // Git sync state
+  const [gitSyncState, setGitSyncState] = useState("idle"); // idle | checking | ready | conflict | merging | merged | error
+  const [gitSyncResult, setGitSyncResult] = useState(null);
   const [enableTranslator, setEnableTranslator] = useState(false);
   const { copied, copy } = useCopyToClipboard(2000);
 
@@ -89,6 +92,57 @@ export default function Sidebar({ onClose }) {
       setIsDisconnected(true);
     } catch (e) {
       setIsDisconnected(true);
+    }
+  };
+
+  const handleGitSyncOpen = async () => {
+    setShowUpdateModal(true);
+    setGitSyncState("checking");
+    setGitSyncResult(null);
+    try {
+      const res = await fetch("/api/update/git-sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "check" }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setGitSyncState("error");
+        setGitSyncResult({ message: data.message || "Check failed" });
+        return;
+      }
+      setGitSyncResult(data);
+      if (data.upToDate) {
+        setGitSyncState("upToDate");
+      } else if (data.hasConflicts) {
+        setGitSyncState("conflict");
+      } else {
+        setGitSyncState("ready");
+      }
+    } catch (e) {
+      setGitSyncState("error");
+      setGitSyncResult({ message: e.message || "Network error" });
+    }
+  };
+
+  const handleGitSyncMerge = async () => {
+    setGitSyncState("merging");
+    try {
+      const res = await fetch("/api/update/git-sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "merge" }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.merged) {
+        setGitSyncState("error");
+        setGitSyncResult({ message: data.message || "Merge failed" });
+        return;
+      }
+      setGitSyncState("merged");
+    } catch (e) {
+      setGitSyncState("error");
+      setGitSyncResult({ message: e.message || "Network error" });
     }
   };
 
@@ -152,7 +206,7 @@ export default function Sidebar({ onClose }) {
               </span>
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => setShowUpdateModal(true)}
+                  onClick={handleGitSyncOpen}
                   className="px-2 py-1 rounded bg-green-600 hover:bg-green-700 dark:bg-amber-500 dark:hover:bg-amber-600 text-white text-[11px] font-semibold transition-colors cursor-pointer"
                 >
                   Update now
@@ -358,17 +412,14 @@ export default function Sidebar({ onClose }) {
         loading={isShuttingDown}
       />
 
-      {/* Update Confirmation Modal */}
-      <ConfirmModal
+      {/* Git Sync Modal */}
+      <GitSyncModal
         isOpen={showUpdateModal}
-        onClose={() => setShowUpdateModal(false)}
-        onConfirm={handleUpdate}
-        title="Update 9Router"
-        message={`This will close 9Router and install v${updateInfo?.latestVersion || ""} in a separate window. Continue?`}
-        confirmText="Update"
-        cancelText="Cancel"
-        variant="primary"
-        loading={isUpdating}
+        onClose={() => { setShowUpdateModal(false); setGitSyncState("idle"); setGitSyncResult(null); }}
+        state={gitSyncState}
+        result={gitSyncResult}
+        latestVersion={updateInfo?.latestVersion}
+        onMerge={handleGitSyncMerge}
       />
 
       {/* Disconnected Overlay */}
@@ -536,4 +587,151 @@ UpdateProgress.propTypes = {
   installCmd: PropTypes.string.isRequired,
   copied: PropTypes.bool,
   onCopy: PropTypes.func.isRequired,
+};
+
+function GitSyncModal({ isOpen, onClose, state, result, latestVersion, onMerge }) {
+  const titles = {
+    idle: "Update 9Router",
+    checking: "Checking for updates…",
+    upToDate: "Already up to date",
+    ready: "Update ready",
+    conflict: "Manual merge required",
+    merging: "Applying update…",
+    merged: "Update applied",
+    error: "Update failed",
+  };
+
+  const footer =
+    state === "checking" || state === "merging" ? null :
+    state === "ready" ? (
+      <>
+        <Button variant="secondary" onClick={onClose}>Cancel</Button>
+        <Button variant="primary" onClick={onMerge}>Merge now</Button>
+      </>
+    ) : (
+      <Button variant="secondary" onClick={onClose}>Close</Button>
+    );
+
+  return (
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title={titles[state] || "Update 9Router"}
+      footer={footer}
+      size="md"
+      closeOnOverlay={state !== "checking" && state !== "merging"}
+      showCloseButton={state !== "checking" && state !== "merging"}
+    >
+      {(state === "checking" || state === "merging") && (
+        <div className="flex items-center gap-3 py-2">
+          <span className="material-symbols-outlined text-primary animate-spin text-[22px]">progress_activity</span>
+          <span className="text-sm text-text-muted">
+            {state === "checking" ? "Fetching upstream changes…" : "Merging upstream/master…"}
+          </span>
+        </div>
+      )}
+
+      {state === "upToDate" && (
+        <div className="flex items-center gap-3 py-2">
+          <span className="material-symbols-outlined text-green-500 text-[22px]">check_circle</span>
+          <span className="text-sm">Already on latest version.</span>
+        </div>
+      )}
+
+      {state === "ready" && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <span className="material-symbols-outlined text-green-500 text-[20px]">upgrade</span>
+            <span className="text-sm">
+              <strong>{result?.behind}</strong> commit{result?.behind !== 1 ? "s" : ""} behind upstream.
+              No conflicting files detected.
+            </span>
+          </div>
+          {result?.isDirty && (
+            <div className="flex items-start gap-2 text-amber-500 bg-amber-500/10 rounded p-2">
+              <span className="material-symbols-outlined text-[16px] mt-0.5">info</span>
+              <span className="text-xs">
+                You have uncommitted changes. The merge will be blocked until you commit or stash them.
+                Run <code className="bg-black/10 px-1 rounded">git stash</code> in the terminal first.
+              </span>
+            </div>
+          )}
+          {latestVersion && !result?.isDirty && (
+            <p className="text-xs text-text-muted">
+              Will merge v{latestVersion} from upstream. Restart app after merging.
+            </p>
+          )}
+        </div>
+      )}
+
+      {state === "conflict" && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2 text-amber-500">
+            <span className="material-symbols-outlined text-[20px]">warning</span>
+            <span className="text-sm font-medium">Conflicts detected — cannot auto-merge</span>
+          </div>
+          {result?.ourConflicts?.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold text-text-muted mb-1">Files you&apos;ve customized (resolve manually):</p>
+              <ul className="space-y-1">
+                {result.ourConflicts.map((f) => (
+                  <li key={f} className="text-xs font-mono bg-amber-500/10 text-amber-600 dark:text-amber-400 rounded px-2 py-1 break-all">{f}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {result?.otherConflicts?.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold text-text-muted mb-1">Other conflicting files:</p>
+              <ul className="space-y-1">
+                {result.otherConflicts.map((f) => (
+                  <li key={f} className="text-xs font-mono bg-surface-2 rounded px-2 py-1 break-all">{f}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <p className="text-xs text-text-muted">
+            Run{" "}
+            <code className="bg-surface-2 px-1 rounded">git fetch upstream && git merge upstream/master</code>
+            {" "}in the terminal and resolve conflicts manually.
+          </p>
+        </div>
+      )}
+
+      {state === "merged" && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2 text-green-500">
+            <span className="material-symbols-outlined text-[20px]">check_circle</span>
+            <span className="text-sm font-medium">Merge complete!</span>
+          </div>
+          <p className="text-xs text-text-muted">
+            Restart the app to apply changes.
+          </p>
+        </div>
+      )}
+
+      {state === "error" && (
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 text-red-500">
+            <span className="material-symbols-outlined text-[20px]">error</span>
+            <span className="text-sm font-medium">Something went wrong</span>
+          </div>
+          {result?.message && (
+            <pre className="text-xs bg-surface-2 rounded p-2 overflow-auto whitespace-pre-wrap break-all text-red-400">
+              {result.message}
+            </pre>
+          )}
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+GitSyncModal.propTypes = {
+  isOpen: PropTypes.bool.isRequired,
+  onClose: PropTypes.func.isRequired,
+  state: PropTypes.string.isRequired,
+  result: PropTypes.object,
+  latestVersion: PropTypes.string,
+  onMerge: PropTypes.func.isRequired,
 };
