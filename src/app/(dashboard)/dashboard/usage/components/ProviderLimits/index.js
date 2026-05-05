@@ -8,13 +8,14 @@ import { parseQuotaData, calculatePercentage } from "./utils";
 import Card from "@/shared/components/Card";
 import { EditConnectionModal } from "@/shared/components";
 import { USAGE_SUPPORTED_PROVIDERS, USAGE_APIKEY_PROVIDERS } from "@/shared/constants/providers";
+import Pagination from "@/shared/components/Pagination";
 
-// Connection is eligible for the quota page when it uses OAuth or is an apikey provider whitelisted for quota
 const isUsageEligible = (conn) =>
   USAGE_SUPPORTED_PROVIDERS.includes(conn.provider) &&
   (conn.authType === "oauth" || USAGE_APIKEY_PROVIDERS.includes(conn.provider));
 
 const REFRESH_INTERVAL_MS = 60000; // 60 seconds
+const PAGE_SIZE = 100;
 const DEPLETED_QUOTA_THRESHOLD = 5; // percent
 const AUTO_REFRESH_STORAGE_KEY = "quotaAutoRefresh";
 
@@ -39,6 +40,7 @@ export default function ProviderLimits() {
   const [proxyPools, setProxyPools] = useState([]);
   const [providerFilter, setProviderFilter] = useState("all");
   const [expiringFirst, setExpiringFirst] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
   const [providerMenuOpen, setProviderMenuOpen] = useState(false);
   const [bulkToggling, setBulkToggling] = useState(false);
 
@@ -377,6 +379,26 @@ export default function ProviderLimits() {
     return a.provider.localeCompare(b.provider);
   });
 
+  const paginatedConnections = sortedConnections.slice(
+    (currentPage - 1) * PAGE_SIZE,
+    currentPage * PAGE_SIZE,
+  );
+
+  // Reset to page 1 when filter or sort changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [providerFilter]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [expiringFirst]);
+
+  // Clamp page when list shrinks (delete / toggle / refresh)
+  useEffect(() => {
+    const maxPage = Math.max(1, Math.ceil(sortedConnections.length / PAGE_SIZE));
+    if (currentPage > maxPage) setCurrentPage(maxPage);
+  }, [sortedConnections.length, currentPage]);
+
   // Connection is depleted when any quota entry hit the threshold
   const isConnectionDepleted = (conn) => {
     const quotas = quotaData[conn.id]?.quotas;
@@ -616,7 +638,7 @@ export default function ProviderLimits() {
 
       {/* Provider cards: 2 columns, compact */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        {sortedConnections.map((conn) => {
+        {paginatedConnections.map((conn) => {
           const quota = quotaData[conn.id];
           const isLoading = loading[conn.id];
           const error = errors[conn.id];
@@ -747,6 +769,15 @@ export default function ProviderLimits() {
           );
         })}
       </div>
+
+      {sortedConnections.length > PAGE_SIZE && (
+        <Pagination
+          currentPage={currentPage}
+          pageSize={PAGE_SIZE}
+          totalItems={sortedConnections.length}
+          onPageChange={setCurrentPage}
+        />
+      )}
 
       <EditConnectionModal
         isOpen={showEditModal}
