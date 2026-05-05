@@ -10,10 +10,25 @@ import { EditConnectionModal } from "@/shared/components";
 import { USAGE_SUPPORTED_PROVIDERS } from "@/shared/constants/providers";
 import Pagination from "@/shared/components/Pagination";
 
-const REFRESH_INTERVAL_MS = 60000; // 60 seconds
-const PAGE_SIZE = 100;
+const REFRESH_INTERVAL_MS = 300000; // 5 minutes
+const QUOTA_FETCH_CONCURRENCY = 10; // max simultaneous quota requests
+const PAGE_SIZE = 80;
 const DEPLETED_QUOTA_THRESHOLD = 5; // percent
 const AUTO_REFRESH_STORAGE_KEY = "quotaAutoRefresh";
+
+// Sliding-window concurrency: runs `limit` tasks at a time, preserves result order
+async function runWithConcurrency(items, limit, fn) {
+  const results = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i]);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
 
 export default function ProviderLimits() {
   const [connections, setConnections] = useState([]);
@@ -27,7 +42,7 @@ export default function ProviderLimits() {
   });
   const [lastUpdated, setLastUpdated] = useState(null);
   const [refreshingAll, setRefreshingAll] = useState(false);
-  const [countdown, setCountdown] = useState(60);
+  const [countdown, setCountdown] = useState(REFRESH_INTERVAL_MS / 1000);
   const [connectionsLoading, setConnectionsLoading] = useState(true);
   const [deletingId, setDeletingId] = useState(null);
   const [togglingId, setTogglingId] = useState(null);
@@ -42,6 +57,12 @@ export default function ProviderLimits() {
 
   const intervalRef = useRef(null);
   const countdownRef = useRef(null);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
   // Fetch all provider connections
   const fetchConnections = useCallback(async () => {
@@ -60,77 +81,47 @@ export default function ProviderLimits() {
     }
   }, []);
 
-  // Fetch quota for a specific connection
-  const fetchQuota = useCallback(async (connectionId, provider) => {
-    setLoading((prev) => ({ ...prev, [connectionId]: true }));
-    setErrors((prev) => ({ ...prev, [connectionId]: null }));
-
+  // Fetch quota for a specific connection — returns result, caller decides whether to commit to state
+  const fetchQuotaRaw = useCallback(async (connectionId, provider, signal) => {
     try {
-      console.log(
-        `[ProviderLimits] Fetching quota for ${provider} (${connectionId})`,
-      );
-      const response = await fetch(`/api/usage/${connectionId}`);
-
+      const response = await fetch(`/api/usage/${connectionId}`, { signal });
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
         const errorMsg = errorData.error || response.statusText;
-
-        // Handle different error types gracefully
-        if (response.status === 404) {
-          // Connection not found - skip silently
-          console.warn(
-            `[ProviderLimits] Connection not found for ${provider}, skipping`,
-          );
-          return;
-        }
-
-        if (response.status === 401) {
-          // Auth error - show message instead of throwing
-          console.warn(
-            `[ProviderLimits] Auth error for ${provider}:`,
-            errorMsg,
-          );
-          setQuotaData((prev) => ({
-            ...prev,
-            [connectionId]: {
-              quotas: [],
-              message: errorMsg,
-            },
-          }));
-          return;
-        }
-
+        if (response.status === 404) return { connectionId, skip: true };
+        if (response.status === 401) return { connectionId, quotas: [], message: errorMsg };
         throw new Error(`HTTP ${response.status}: ${errorMsg}`);
       }
-
       const data = await response.json();
-      console.log(`[ProviderLimits] Got quota for ${provider}:`, data);
-
-      // Parse quota data using provider-specific parser
-      const parsedQuotas = parseQuotaData(provider, data);
-
-      setQuotaData((prev) => ({
-        ...prev,
-        [connectionId]: {
-          quotas: parsedQuotas,
-          plan: data.plan || null,
-          message: data.message || null,
-          raw: data,
-        },
-      }));
+      return {
+        connectionId,
+        quotas: parseQuotaData(provider, data),
+        plan: data.plan || null,
+        message: data.message || null,
+        raw: data,
+      };
     } catch (error) {
-      console.error(
-        `[ProviderLimits] Error fetching quota for ${provider} (${connectionId}):`,
-        error,
-      );
-      setErrors((prev) => ({
-        ...prev,
-        [connectionId]: error.message || "Failed to fetch quota",
-      }));
-    } finally {
-      setLoading((prev) => ({ ...prev, [connectionId]: false }));
+      if (error.name === "AbortError") return { connectionId, aborted: true };
+      return { connectionId, error: error.message || "Failed to fetch quota" };
     }
   }, []);
+
+  const fetchQuota = useCallback(async (connectionId, provider) => {
+    if (!mountedRef.current) return;
+    setLoading((prev) => ({ ...prev, [connectionId]: true }));
+    setErrors((prev) => ({ ...prev, [connectionId]: null }));
+    const result = await fetchQuotaRaw(connectionId, provider, null);
+    if (!mountedRef.current || result.aborted || result.skip) {
+      if (mountedRef.current) setLoading((prev) => ({ ...prev, [connectionId]: false }));
+      return;
+    }
+    if (result.error) {
+      setErrors((prev) => ({ ...prev, [connectionId]: result.error }));
+    } else {
+      setQuotaData((prev) => ({ ...prev, [connectionId]: { quotas: result.quotas, plan: result.plan, message: result.message, raw: result.raw } }));
+    }
+    setLoading((prev) => ({ ...prev, [connectionId]: false }));
+  }, [fetchQuotaRaw]);
 
   // Refresh quota for a specific provider
   const refreshProvider = useCallback(
@@ -232,41 +223,58 @@ export default function ProviderLimits() {
     };
   }, []);
 
-  // Refresh all providers
+  // Refresh all providers — batches quota results into a single state update
   const refreshAll = useCallback(async () => {
-    if (refreshingAll) return;
+    if (refreshingAll || !mountedRef.current) return;
 
     setRefreshingAll(true);
-    setCountdown(60);
+    setCountdown(REFRESH_INTERVAL_MS / 1000);
 
     try {
       const conns = await fetchConnections();
+      if (!mountedRef.current) return;
 
-      // Filter only supported OAuth providers
       const oauthConnections = conns.filter(
         (conn) =>
           USAGE_SUPPORTED_PROVIDERS.includes(conn.provider) &&
           conn.authType === "oauth",
       );
 
-      // Fetch quota for supported OAuth connections only
-      await Promise.all(
-        oauthConnections.map((conn) => fetchQuota(conn.id, conn.provider)),
+      const results = await runWithConcurrency(
+        oauthConnections,
+        QUOTA_FETCH_CONCURRENCY,
+        (conn) => fetchQuotaRaw(conn.id, conn.provider, null),
       );
 
+      if (!mountedRef.current) return;
+
+      const batchedQuota = {};
+      const batchedErrors = {};
+      for (const r of results) {
+        if (r.aborted || r.skip) continue;
+        if (r.error) batchedErrors[r.connectionId] = r.error;
+        else batchedQuota[r.connectionId] = { quotas: r.quotas, plan: r.plan, message: r.message, raw: r.raw };
+      }
+      setQuotaData(batchedQuota);
+      setErrors(batchedErrors);
       setLastUpdated(new Date());
     } catch (error) {
-      console.error("Error refreshing all providers:", error);
+      if (mountedRef.current) console.error("Error refreshing all providers:", error);
     } finally {
-      setRefreshingAll(false);
+      if (mountedRef.current) setRefreshingAll(false);
     }
-  }, [refreshingAll, fetchConnections, fetchQuota]);
+  }, [refreshingAll, fetchConnections, fetchQuotaRaw]);
 
-  // Initial load: fetch connections first so cards render immediately, then fetch quotas
+  // Initial load: fetch connections, then fetch quotas with concurrency limit
   useEffect(() => {
+    const controller = new AbortController();
+    const { signal } = controller;
+
     const initializeData = async () => {
       setConnectionsLoading(true);
+      setRefreshingAll(true);
       const conns = await fetchConnections();
+      if (!mountedRef.current) return;
       setConnectionsLoading(false);
 
       const oauthConnections = conns.filter(
@@ -275,20 +283,36 @@ export default function ProviderLimits() {
           conn.authType === "oauth",
       );
 
-      // Mark all as loading before fetching
       const loadingState = {};
-      oauthConnections.forEach((conn) => {
-        loadingState[conn.id] = true;
-      });
-      setLoading(loadingState);
+      oauthConnections.forEach((conn) => { loadingState[conn.id] = true; });
+      if (mountedRef.current) setLoading(loadingState);
 
-      await Promise.all(
-        oauthConnections.map((conn) => fetchQuota(conn.id, conn.provider)),
+      const results = await runWithConcurrency(
+        oauthConnections,
+        QUOTA_FETCH_CONCURRENCY,
+        (conn) => fetchQuotaRaw(conn.id, conn.provider, signal),
       );
+
+      if (!mountedRef.current) return;
+
+      const batchedQuota = {};
+      const batchedErrors = {};
+      const batchedLoading = {};
+      for (const r of results) {
+        if (r.aborted || r.skip) continue;
+        batchedLoading[r.connectionId] = false;
+        if (r.error) batchedErrors[r.connectionId] = r.error;
+        else batchedQuota[r.connectionId] = { quotas: r.quotas, plan: r.plan, message: r.message, raw: r.raw };
+      }
+      setQuotaData(batchedQuota);
+      setErrors(batchedErrors);
+      setLoading(batchedLoading);
       setLastUpdated(new Date());
+      setRefreshingAll(false);
     };
 
     initializeData();
+    return () => controller.abort();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Persist auto-refresh preference
@@ -319,7 +343,7 @@ export default function ProviderLimits() {
     // Countdown interval
     countdownRef.current = setInterval(() => {
       setCountdown((prev) => {
-        if (prev <= 1) return 60;
+        if (prev <= 1) return REFRESH_INTERVAL_MS / 1000;
         return prev - 1;
       });
     }, 1000);
@@ -346,7 +370,7 @@ export default function ProviderLimits() {
         // Resume auto-refresh when tab becomes visible
         intervalRef.current = setInterval(refreshAll, REFRESH_INTERVAL_MS);
         countdownRef.current = setInterval(() => {
-          setCountdown((prev) => (prev <= 1 ? 60 : prev - 1));
+          setCountdown((prev) => (prev <= 1 ? REFRESH_INTERVAL_MS / 1000 : prev - 1));
         }, 1000);
       }
     };
@@ -357,15 +381,22 @@ export default function ProviderLimits() {
     };
   }, [autoRefresh, refreshAll]);
 
-  // Filter only supported providers
-  const filteredConnections = connections.filter(
-    (conn) =>
-      USAGE_SUPPORTED_PROVIDERS.includes(conn.provider) &&
-      conn.authType === "oauth",
+  const filteredConnections = useMemo(
+    () =>
+      connections.filter(
+        (conn) =>
+          USAGE_SUPPORTED_PROVIDERS.includes(conn.provider) &&
+          conn.authType === "oauth",
+      ),
+    [connections],
   );
 
-  const providerFilteredConnections = filteredConnections.filter(
-    (conn) => providerFilter === "all" || conn.provider === providerFilter,
+  const providerFilteredConnections = useMemo(
+    () =>
+      filteredConnections.filter(
+        (conn) => providerFilter === "all" || conn.provider === providerFilter,
+      ),
+    [filteredConnections, providerFilter],
   );
 
   const getEarliestResetTime = (conn) => {
