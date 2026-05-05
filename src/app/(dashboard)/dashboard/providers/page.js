@@ -233,39 +233,31 @@ export default function ProvidersPage() {
     }
   };
 
-  const compatibleProviders = providerNodes
-    .filter((node) => node.type === "openai-compatible")
-    .map((node) => ({
-      id: node.id,
-      name: node.name || "OpenAI Compatible",
-      color: "#10A37F",
-      textIcon: "OC",
-      apiType: node.apiType,
-    }))
-    .filter((p) => matchSearch(p.name));
+  const compatibleProviders = useMemo(
+    () =>
+      providerNodes
+        .filter((node) => node.type === "openai-compatible")
+        .map((node) => ({
+          id: node.id,
+          name: node.name || "OpenAI Compatible",
+          color: "#10A37F",
+          textIcon: "OC",
+          apiType: node.apiType,
+        })),
+    [providerNodes]
+  );
 
-  const anthropicCompatibleProviders = providerNodes
-    .filter((node) => node.type === "anthropic-compatible")
-    .map((node) => ({
-      id: node.id,
-      name: node.name || "Anthropic Compatible",
-      color: "#D97757",
-      textIcon: "AC",
-    }))
-    .filter((p) => matchSearch(p.name));
-
-  const oauthEntries = Object.entries(OAUTH_PROVIDERS).filter(([, info]) =>
-    matchSearch(info.name),
-  );
-  const freeEntries = Object.entries(FREE_PROVIDERS).filter(([, info]) =>
-    matchSearch(info.name),
-  );
-  const freeTierEntries = Object.entries(FREE_TIER_PROVIDERS).filter(
-    ([, info]) => matchSearch(info.name),
-  );
-  const apikeyEntries = Object.entries(APIKEY_PROVIDERS).filter(
-    ([, info]) =>
-      (info.serviceKinds ?? ["llm"]).includes("llm") && matchSearch(info.name),
+  const anthropicCompatibleProviders = useMemo(
+    () =>
+      providerNodes
+        .filter((node) => node.type === "anthropic-compatible")
+        .map((node) => ({
+          id: node.id,
+          name: node.name || "Anthropic Compatible",
+          color: "#D97757",
+          textIcon: "AC",
+        })),
+    [providerNodes]
   );
 
   const allCards = useMemo(() => [
@@ -288,12 +280,21 @@ export default function ProvidersPage() {
     })),
   ], [compatibleProviders, anthropicCompatibleProviders]);
 
-  const pageCards = allCards.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  const pageCards = useMemo(
+    () => allCards.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE),
+    [allCards, currentPage]
+  );
 
-  const sections = ['oauth', 'free', 'apikey', 'compatible'];
-  const cardsBySection = {};
-  sections.forEach(s => { cardsBySection[s] = []; });
-  pageCards.forEach(card => cardsBySection[card.sectionKey].push(card));
+  const cardsBySection = useMemo(() => {
+    const map = { oauth: [], free: [], apikey: [], compatible: [] };
+    pageCards.forEach((card) => map[card.sectionKey].push(card));
+    return map;
+  }, [pageCards]);
+
+  const totalCompatibleCount = useMemo(
+    () => allCards.filter((c) => c.sectionKey === 'compatible').length,
+    [allCards]
+  );
 
   useEffect(() => {
     const maxPage = Math.max(1, Math.ceil(allCards.length / PAGE_SIZE));
@@ -534,8 +535,7 @@ export default function ProvidersPage() {
             </Button>
           </div>
         </div>
-        {compatibleProviders.length === 0 &&
-        anthropicCompatibleProviders.length === 0 ? (
+        {totalCompatibleCount === 0 ? (
           <div className="text-center py-8 border border-dashed border-border rounded-xl">
             <span className="material-symbols-outlined text-[32px] text-text-muted mb-2">
               extension
@@ -624,19 +624,6 @@ export default function ProvidersPage() {
 function ProviderCard({ providerId, provider, stats, authType, onToggle }) {
   const { connected, error, errorCode, errorTime, allDisabled } = stats;
   const isNoAuth = !!provider.noAuth;
-
-  const dotColors = {
-    free: "bg-green-500",
-    oauth: "bg-blue-500",
-    apikey: "bg-amber-500",
-    compatible: "bg-orange-500",
-  };
-  const dotLabels = {
-    free: "Free",
-    oauth: "OAuth",
-    apikey: "API Key",
-    compatible: "Compatible",
-  };
 
   return (
     <Link href={`/dashboard/providers/${providerId}`} className="group min-w-0">
@@ -743,19 +730,6 @@ function ApiKeyProviderCard({
   const isAnthropicCompatible = providerId.startsWith(
     ANTHROPIC_COMPATIBLE_PREFIX,
   );
-
-  const dotColors = {
-    free: "bg-green-500",
-    oauth: "bg-blue-500",
-    apikey: "bg-amber-500",
-    compatible: "bg-orange-500",
-  };
-  const dotLabels = {
-    free: "Free",
-    oauth: "OAuth",
-    apikey: "API Key",
-    compatible: "Compatible",
-  };
 
   const getIconPath = () => {
     if (isCompatible)
