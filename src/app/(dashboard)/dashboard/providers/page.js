@@ -24,6 +24,7 @@ import {
 import Link from "next/link";
 import { getErrorCode, getRelativeTime } from "@/shared/utils";
 import { useNotificationStore } from "@/store/notificationStore";
+import { useHeaderSearchStore } from "@/store/headerSearchStore";
 import ModelAvailabilityBadge from "./components/ModelAvailabilityBadge";
 import Pagination from "@/shared/components/Pagination";
 
@@ -107,6 +108,18 @@ export default function ProvidersPage() {
   const [testResults, setTestResults] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
   const notify = useNotificationStore();
+  const searchQuery = useHeaderSearchStore((s) => s.query);
+  const registerSearch = useHeaderSearchStore((s) => s.register);
+  const unregisterSearch = useHeaderSearchStore((s) => s.unregister);
+
+  useEffect(() => {
+    registerSearch("Search providers...");
+    return () => unregisterSearch();
+  }, [registerSearch, unregisterSearch]);
+
+  const matchSearch = (name) =>
+    !searchQuery.trim() ||
+    name.toLowerCase().includes(searchQuery.trim().toLowerCase());
 
   useEffect(() => {
     const fetchData = async () => {
@@ -230,8 +243,9 @@ export default function ProvidersPage() {
           color: "#10A37F",
           textIcon: "OC",
           apiType: node.apiType,
-        })),
-    [providerNodes]
+        }))
+        .filter((p) => matchSearch(p.name)),
+    [providerNodes, searchQuery]
   );
 
   const anthropicCompatibleProviders = useMemo(
@@ -243,29 +257,28 @@ export default function ProvidersPage() {
           name: node.name || "Anthropic Compatible",
           color: "#D97757",
           textIcon: "AC",
-        })),
-    [providerNodes]
+        }))
+        .filter((p) => matchSearch(p.name)),
+    [providerNodes, searchQuery]
   );
 
   const allCards = useMemo(() => [
-    ...Object.entries(OAUTH_PROVIDERS).map(([key, info]) => ({
-      sectionKey: 'oauth', cardType: 'oauth', id: key, info,
-    })),
-    ...Object.entries(FREE_PROVIDERS).map(([key, info]) => ({
-      sectionKey: 'free', cardType: 'free', id: key, info,
-    })),
-    ...Object.entries(FREE_TIER_PROVIDERS).map(([key, info]) => ({
-      sectionKey: 'free', cardType: 'apikey', id: key, info,
-    })),
+    ...Object.entries(OAUTH_PROVIDERS)
+      .filter(([, info]) => matchSearch(info.name))
+      .map(([key, info]) => ({ sectionKey: 'oauth', cardType: 'oauth', id: key, info })),
+    ...Object.entries(FREE_PROVIDERS)
+      .filter(([, info]) => matchSearch(info.name))
+      .map(([key, info]) => ({ sectionKey: 'free', cardType: 'free', id: key, info })),
+    ...Object.entries(FREE_TIER_PROVIDERS)
+      .filter(([, info]) => matchSearch(info.name))
+      .map(([key, info]) => ({ sectionKey: 'free', cardType: 'apikey', id: key, info })),
     ...Object.entries(APIKEY_PROVIDERS)
-      .filter(([, info]) => (info.serviceKinds ?? ['llm']).includes('llm'))
-      .map(([key, info]) => ({
-        sectionKey: 'apikey', cardType: 'apikey', id: key, info,
-      })),
+      .filter(([, info]) => (info.serviceKinds ?? ['llm']).includes('llm') && matchSearch(info.name))
+      .map(([key, info]) => ({ sectionKey: 'apikey', cardType: 'apikey', id: key, info })),
     ...[...compatibleProviders, ...anthropicCompatibleProviders].map((info) => ({
       sectionKey: 'compatible', cardType: 'compatible', id: info.id, info,
     })),
-  ], [compatibleProviders, anthropicCompatibleProviders]);
+  ], [compatibleProviders, anthropicCompatibleProviders, searchQuery]);
 
   const pageCards = useMemo(
     () => allCards.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE),
@@ -297,9 +310,21 @@ export default function ProvidersPage() {
     );
   }
 
+  const hasAnyResult = allCards.length > 0;
+
   return (
     <div className="flex min-w-0 flex-col gap-6 px-1 sm:px-0">
+      {!hasAnyResult && (
+        <div className="text-center py-8 border border-dashed border-border rounded-xl">
+          <span className="material-symbols-outlined text-[32px] text-text-muted mb-2">
+            search_off
+          </span>
+          <p className="text-text-muted text-sm">No providers match your search</p>
+        </div>
+      )}
+
       {/* OAuth Providers */}
+      {allCards.some((c) => c.sectionKey === "oauth") && (
       <div className="flex flex-col gap-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <h2 className="text-lg sm:text-xl font-semibold flex items-center gap-2 leading-tight">
@@ -342,8 +367,10 @@ export default function ProvidersPage() {
           </div>
         )}
       </div>
+      )}
 
       {/* Free Tier Providers */}
+      {allCards.some((c) => c.sectionKey === "free") && (
       <div className="flex flex-col gap-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <h2 className="text-lg sm:text-xl font-semibold flex items-center gap-2 leading-tight">
@@ -394,8 +421,10 @@ export default function ProvidersPage() {
           </div>
         )}
       </div>
+      )}
 
       {/* API Key Providers — fixed list */}
+      {allCards.some((c) => c.sectionKey === "apikey") && (
       <div className="flex flex-col gap-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <h2 className="text-lg sm:text-xl font-semibold flex items-center gap-2 leading-tight">
@@ -435,6 +464,7 @@ export default function ProvidersPage() {
           </div>
         )}
       </div>
+      )}
 
       {/* Web Cookie Providers — use browser subscription cookie instead of API key */}
       {/* <div className="flex flex-col gap-4">
