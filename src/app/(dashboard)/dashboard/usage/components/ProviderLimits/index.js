@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import ProviderIcon from "@/shared/components/ProviderIcon";
 import QuotaTable from "./QuotaTable";
 import Toggle from "@/shared/components/Toggle";
@@ -368,36 +368,18 @@ export default function ProviderLimits() {
 
   // Sort providers by USAGE_SUPPORTED_PROVIDERS order, then alphabetically.
   // Optionally surface accounts with quotas expiring soonest first.
-  const sortedConnections = [...providerFilteredConnections].sort((a, b) => {
-    if (expiringFirst) {
-      const expiryDiff = getEarliestResetTime(a) - getEarliestResetTime(b);
-      if (expiryDiff !== 0) return expiryDiff;
-    }
-    const orderA = USAGE_SUPPORTED_PROVIDERS.indexOf(a.provider);
-    const orderB = USAGE_SUPPORTED_PROVIDERS.indexOf(b.provider);
-    if (orderA !== orderB) return orderA - orderB;
-    return a.provider.localeCompare(b.provider);
-  });
-
-  const paginatedConnections = sortedConnections.slice(
-    (currentPage - 1) * PAGE_SIZE,
-    currentPage * PAGE_SIZE,
-  );
-
-  // Reset to page 1 when filter or sort changes
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [providerFilter]);
-
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [expiringFirst]);
-
-  // Clamp page when list shrinks (delete / toggle / refresh)
-  useEffect(() => {
-    const maxPage = Math.max(1, Math.ceil(sortedConnections.length / PAGE_SIZE));
-    if (currentPage > maxPage) setCurrentPage(maxPage);
-  }, [sortedConnections.length, currentPage]);
+  const sortedConnections = useMemo(() => {
+    return [...providerFilteredConnections].sort((a, b) => {
+      if (expiringFirst) {
+        const expiryDiff = getEarliestResetTime(a) - getEarliestResetTime(b);
+        if (expiryDiff !== 0) return expiryDiff;
+      }
+      const orderA = USAGE_SUPPORTED_PROVIDERS.indexOf(a.provider);
+      const orderB = USAGE_SUPPORTED_PROVIDERS.indexOf(b.provider);
+      if (orderA !== orderB) return orderA - orderB;
+      return a.provider.localeCompare(b.provider);
+    });
+  }, [providerFilteredConnections, expiringFirst, quotaData]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Connection is depleted when any quota entry hit the threshold
   const isConnectionDepleted = (conn) => {
@@ -408,6 +390,22 @@ export default function ProviderLimits() {
       return calculatePercentage(q.used, q.total) <= DEPLETED_QUOTA_THRESHOLD;
     });
   };
+
+  const paginatedConnections = useMemo(
+    () => sortedConnections.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE),
+    [sortedConnections, currentPage],
+  );
+
+  // Reset to page 1 when filter or sort changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [providerFilter, expiringFirst]);
+
+  // Clamp page when list shrinks (delete / toggle / refresh)
+  useEffect(() => {
+    const maxPage = Math.max(1, Math.ceil(sortedConnections.length / PAGE_SIZE));
+    if (currentPage > maxPage) setCurrentPage(maxPage);
+  }, [sortedConnections.length, currentPage]);
 
   const bulkSetActive = useCallback(
     async (targetIds, isActive) => {
