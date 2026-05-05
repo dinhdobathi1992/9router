@@ -25,6 +25,7 @@ import Link from "next/link";
 import { getErrorCode, getRelativeTime } from "@/shared/utils";
 import { useNotificationStore } from "@/store/notificationStore";
 import ModelAvailabilityBadge from "./components/ModelAvailabilityBadge";
+import Pagination from "@/shared/components/Pagination";
 
 function getStatusDisplay(connected, error, errorCode) {
   const parts = [];
@@ -93,6 +94,8 @@ function getConnectionErrorTag(connection) {
   return "ERR";
 }
 
+const PAGE_SIZE = 100;
+
 export default function ProvidersPage() {
   const [connections, setConnections] = useState([]);
   const [providerNodes, setProviderNodes] = useState([]);
@@ -102,6 +105,7 @@ export default function ProvidersPage() {
     useState(false);
   const [testingMode, setTestingMode] = useState(null);
   const [testResults, setTestResults] = useState(null);
+  const [currentPage, setCurrentPage] = useState(1);
   const notify = useNotificationStore();
 
   useEffect(() => {
@@ -235,6 +239,54 @@ export default function ProvidersPage() {
       textIcon: "AC",
     }));
 
+  const allCards = [
+    ...Object.entries(OAUTH_PROVIDERS).map(([key, info]) => ({
+      sectionKey: 'oauth',
+      cardType: 'oauth',
+      id: key,
+      info,
+    })),
+    ...Object.entries(FREE_PROVIDERS).map(([key, info]) => ({
+      sectionKey: 'free',
+      cardType: 'free',
+      id: key,
+      info,
+    })),
+    ...Object.entries(FREE_TIER_PROVIDERS).map(([key, info]) => ({
+      sectionKey: 'free',
+      cardType: 'apikey',
+      id: key,
+      info,
+    })),
+    ...Object.entries(APIKEY_PROVIDERS)
+      .filter(([, info]) => (info.serviceKinds ?? ['llm']).includes('llm'))
+      .map(([key, info]) => ({
+        sectionKey: 'apikey',
+        cardType: 'apikey',
+        id: key,
+        info,
+      })),
+    ...[...compatibleProviders, ...anthropicCompatibleProviders].map((info) => ({
+      sectionKey: 'compatible',
+      cardType: 'compatible',
+      id: info.id,
+      info,
+    })),
+  ];
+
+  const pageCards = allCards.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+
+  const sections = ['oauth', 'free', 'apikey', 'compatible'];
+  const cardsBySection = {};
+  sections.forEach(s => { cardsBySection[s] = []; });
+  pageCards.forEach(card => cardsBySection[card.sectionKey].push(card));
+
+  useEffect(() => {
+    const total = allCards.length;
+    const maxPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
+    if (currentPage > maxPage) setCurrentPage(maxPage);
+  }, [providerNodes]);
+
   if (loading) {
     return (
       <div className="flex flex-col gap-8">
@@ -274,18 +326,20 @@ export default function ProvidersPage() {
             </button>
           </div>
         </div>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
-          {Object.entries(OAUTH_PROVIDERS).map(([key, info]) => (
-            <ProviderCard
-              key={key}
-              providerId={key}
-              provider={info}
-              stats={getProviderStats(key, "oauth")}
-              authType="oauth"
-              onToggle={(active) => handleToggleProvider(key, "oauth", active)}
-            />
-          ))}
-        </div>
+        {cardsBySection.oauth.length > 0 && (
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
+            {cardsBySection.oauth.map((card) => (
+              <ProviderCard
+                key={card.id}
+                providerId={card.id}
+                provider={card.info}
+                stats={getProviderStats(card.id, "oauth")}
+                authType="oauth"
+                onToggle={(active) => handleToggleProvider(card.id, "oauth", active)}
+              />
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Free Tier Providers */}
@@ -313,28 +367,31 @@ export default function ProvidersPage() {
             {testingMode === "free" ? "Testing..." : "Test All"}
           </button>
         </div>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
-          {Object.entries(FREE_PROVIDERS).map(([key, info]) => (
-            <ProviderCard
-              key={key}
-              providerId={key}
-              provider={info}
-              stats={getProviderStats(key, "oauth")}
-              authType="free"
-              onToggle={(active) => handleToggleProvider(key, "oauth", active)}
-            />
-          ))}
-          {Object.entries(FREE_TIER_PROVIDERS).map(([key, info]) => (
-            <ApiKeyProviderCard
-              key={key}
-              providerId={key}
-              provider={info}
-              stats={getProviderStats(key, "apikey")}
-              authType="apikey"
-              onToggle={(active) => handleToggleProvider(key, "apikey", active)}
-            />
-          ))}
-        </div>
+        {cardsBySection.free.length > 0 && (
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
+            {cardsBySection.free.map((card) => (
+              card.cardType === 'free' ? (
+                <ProviderCard
+                  key={card.id}
+                  providerId={card.id}
+                  provider={card.info}
+                  stats={getProviderStats(card.id, "oauth")}
+                  authType="free"
+                  onToggle={(active) => handleToggleProvider(card.id, "oauth", active)}
+                />
+              ) : (
+                <ApiKeyProviderCard
+                  key={card.id}
+                  providerId={card.id}
+                  provider={card.info}
+                  stats={getProviderStats(card.id, "apikey")}
+                  authType="apikey"
+                  onToggle={(active) => handleToggleProvider(card.id, "apikey", active)}
+                />
+              )
+            ))}
+          </div>
+        )}
       </div>
 
       {/* API Key Providers — fixed list */}
@@ -362,20 +419,20 @@ export default function ProvidersPage() {
             {testingMode === "apikey" ? "Testing..." : "Test All"}
           </button>
         </div>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
-          {Object.entries(APIKEY_PROVIDERS)
-            .filter(([, info]) => (info.serviceKinds ?? ["llm"]).includes("llm"))
-            .map(([key, info]) => (
+        {cardsBySection.apikey.length > 0 && (
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
+            {cardsBySection.apikey.map((card) => (
               <ApiKeyProviderCard
-                key={key}
-                providerId={key}
-                provider={info}
-                stats={getProviderStats(key, "apikey")}
+                key={card.id}
+                providerId={card.id}
+                provider={card.info}
+                stats={getProviderStats(card.id, "apikey")}
                 authType="apikey"
-                onToggle={(active) => handleToggleProvider(key, "apikey", active)}
+                onToggle={(active) => handleToggleProvider(card.id, "apikey", active)}
               />
             ))}
-        </div>
+          </div>
+        )}
       </div>
 
       {/* Web Cookie Providers — use browser subscription cookie instead of API key */}
@@ -455,25 +512,30 @@ export default function ProvidersPage() {
               endpoints
             </p>
           </div>
-        ) : (
+        ) : cardsBySection.compatible.length > 0 ? (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
-            {[...compatibleProviders, ...anthropicCompatibleProviders].map(
-              (info) => (
-                <ApiKeyProviderCard
-                  key={info.id}
-                  providerId={info.id}
-                  provider={info}
-                  stats={getProviderStats(info.id, "apikey")}
-                  authType="compatible"
-                  onToggle={(active) =>
-                    handleToggleProvider(info.id, "apikey", active)
-                  }
-                />
-              ),
-            )}
+            {cardsBySection.compatible.map((card) => (
+              <ApiKeyProviderCard
+                key={card.id}
+                providerId={card.id}
+                provider={card.info}
+                stats={getProviderStats(card.id, "apikey")}
+                authType="compatible"
+                onToggle={(active) => handleToggleProvider(card.id, "apikey", active)}
+              />
+            ))}
           </div>
-        )}
+        ) : null}
       </div>
+
+      {allCards.length > PAGE_SIZE && (
+        <Pagination
+          currentPage={currentPage}
+          pageSize={PAGE_SIZE}
+          totalItems={allCards.length}
+          onPageChange={setCurrentPage}
+        />
+      )}
 
       <AddOpenAICompatibleModal
         isOpen={showAddCompatibleModal}
