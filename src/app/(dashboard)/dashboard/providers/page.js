@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import PropTypes from "prop-types";
 import {
   Card,
@@ -268,40 +268,25 @@ export default function ProvidersPage() {
       (info.serviceKinds ?? ["llm"]).includes("llm") && matchSearch(info.name),
   );
 
-  const allCards = [
+  const allCards = useMemo(() => [
     ...Object.entries(OAUTH_PROVIDERS).map(([key, info]) => ({
-      sectionKey: 'oauth',
-      cardType: 'oauth',
-      id: key,
-      info,
+      sectionKey: 'oauth', cardType: 'oauth', id: key, info,
     })),
     ...Object.entries(FREE_PROVIDERS).map(([key, info]) => ({
-      sectionKey: 'free',
-      cardType: 'free',
-      id: key,
-      info,
+      sectionKey: 'free', cardType: 'free', id: key, info,
     })),
     ...Object.entries(FREE_TIER_PROVIDERS).map(([key, info]) => ({
-      sectionKey: 'free',
-      cardType: 'apikey',
-      id: key,
-      info,
+      sectionKey: 'free', cardType: 'apikey', id: key, info,
     })),
     ...Object.entries(APIKEY_PROVIDERS)
       .filter(([, info]) => (info.serviceKinds ?? ['llm']).includes('llm'))
       .map(([key, info]) => ({
-        sectionKey: 'apikey',
-        cardType: 'apikey',
-        id: key,
-        info,
+        sectionKey: 'apikey', cardType: 'apikey', id: key, info,
       })),
     ...[...compatibleProviders, ...anthropicCompatibleProviders].map((info) => ({
-      sectionKey: 'compatible',
-      cardType: 'compatible',
-      id: info.id,
-      info,
+      sectionKey: 'compatible', cardType: 'compatible', id: info.id, info,
     })),
-  ];
+  ], [compatibleProviders, anthropicCompatibleProviders]);
 
   const pageCards = allCards.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
 
@@ -311,10 +296,9 @@ export default function ProvidersPage() {
   pageCards.forEach(card => cardsBySection[card.sectionKey].push(card));
 
   useEffect(() => {
-    const total = allCards.length;
-    const maxPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
+    const maxPage = Math.max(1, Math.ceil(allCards.length / PAGE_SIZE));
     if (currentPage > maxPage) setCurrentPage(maxPage);
-  }, [providerNodes]);
+  }, [allCards.length, currentPage]);
 
   if (loading) {
     return (
