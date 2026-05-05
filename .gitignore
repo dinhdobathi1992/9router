@@ -70,3 +70,9 @@ ecosystem.config.*
 
 scripts/agSniffer/*
 gitbooks/*
+
+# Claude Code local backend config (contains credentials)
+.claude/settings.local.json
+
+# Git worktrees
+.worktrees/
